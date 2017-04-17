@@ -3,7 +3,7 @@ package session
 import (
 	"net/http"
 	"time"
-
+	"errors"
 )
 
 type SessionState int
@@ -67,10 +67,6 @@ type Session struct {
 
 var cookie CookieOptions
 
-func NewSession(token string) *Session {
-	return &Session{State: NEW, Token: token}
-}
-
 // initialized cookie parameters
 func Init(provider Provider, cookieName, domain, path string, maxAge int, secure bool) {
 	cookie.Store = provider
@@ -81,41 +77,34 @@ func Init(provider Provider, cookieName, domain, path string, maxAge int, secure
 	cookie.Secure = secure // transmit on https only
 }
 
-// start a session
+// start a session; returns error when session.State is NEW
 func Start(r *http.Request) (*Session, error) {
 	var s *Session
-	var cookieVal string
 	c, er := r.Cookie(cookie.Name)
-	if er == nil {
-		cookieVal = c.Value
+	if er != nil {
+		return new(Session), er
 	}
-	s, er = cookie.Store.Get(cookieVal)
+	if c.Value == "" {
+		return new(Session), errors.New("cookie is empty")
+	}
+	s, er = cookie.Store.Get(c.Value)
 
 	if er != nil {
-		// unable to provide session
-		return nil, er
+		return new(Session), er
 	}
-	if s.State == VALID && s.Expiry < uint32(time.Now().Unix()) {
+	if s.Expiry < uint32(time.Now().Unix()) {
 		s.State = EXPIRED
+		cookie.Store.Delete(s.Token)
+		return s, nil
 	}
+	s.State = VALID
 	return s, nil
 }
 
 func Save(w http.ResponseWriter, s *Session) error {
-	t := time.Now()
-	maxAge := 0
-
-	if s.State == NEW {
-		s.State = VALID
-		t = time.Now().Add(cookie.MaxAge)
-		s.Expiry = uint32(t.Unix())
-		cookie.Store.Put(s)
-
-	} else if s.State == EXPIRED {
-		maxAge = -1
-		s.Expiry = uint32(t.Unix())
-		cookie.Store.Delete(s.Token)
-	}
+	s.State = VALID
+	t := time.Now().Add(cookie.MaxAge)
+	s.Expiry = uint32(t.Unix())
 
 	c := new(http.Cookie)
 	// token value
@@ -130,7 +119,7 @@ func Save(w http.ResponseWriter, s *Session) error {
 	c.Secure = cookie.Secure
 	c.HttpOnly = true
 	//c.Expires = t
-	c.MaxAge = maxAge
+	c.MaxAge = 0
 
 	http.SetCookie(w, c)
 	return nil
@@ -138,7 +127,6 @@ func Save(w http.ResponseWriter, s *Session) error {
 
 func Destroy(w http.ResponseWriter, s *Session) error {
 	c := new(http.Cookie)
-	// token value
 	err := cookie.Store.Delete(s.Token)
 	if err != nil {
 		return err
@@ -156,4 +144,3 @@ func Destroy(w http.ResponseWriter, s *Session) error {
 	return nil
 }
 
-///*********************************

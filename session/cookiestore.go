@@ -72,12 +72,8 @@ func NewCookieStore(hashKey, encKey16or32 []byte, enc SessionDataCoder, sessionD
 		return nil, errors.New("invalid encryption key length;")
 	}
 
-	if enc == nil {
-		return nil, errors.New("DataEncoder is nil")
-	}
-
-	if sessionDataAllocator == nil {
-		return nil, errors.New("sessionDataAllocator is nil")
+	if (enc == nil && sessionDataAllocator != nil) || (enc != nil && sessionDataAllocator == nil) {
+		return nil, errors.New("DataEncoder is nil or sessionDataAllocator is nil")
 	}
 
 	cs := &CookieStore{hashKey: hashKey, encKey: encKey16or32, dataEnc: enc, dataAllocator: sessionDataAllocator}
@@ -151,25 +147,17 @@ func (cs *CookieStore) Put(s *Session) (string, error) {
 }
 
 func (cs *CookieStore) Get(cookieVal string) (*Session, error) {
-	s := new(Session)
-
-	if cookieVal == "" {
-		s.State = NEW
-		return s, nil
-	}
 
 	byts, err := base64.URLEncoding.DecodeString(cookieVal)
 
 	if err != nil {
-		s.State = EXPIRED //TAMPERED
-		return s, err
+		return nil, err
 	}
 
 	dataLen := len(byts)
 
 	if dataLen < 13+cs.hashSize {
-		s.State = EXPIRED
-		return s, errors.New("session cookie is invalid")
+		return nil, errors.New("session cookie is invalid length")
 	}
 
 	rawData := make([]byte, dataLen)
@@ -188,6 +176,8 @@ func (cs *CookieStore) Get(cookieVal string) (*Session, error) {
 	mac := hmac.New(cs.hashAlgo, cs.hashKey)
 	mac.Write(rawData[0 : dataLen-cs.hashSize])
 	hSum := mac.Sum(nil)
+
+	s := new(Session)
 
 	if !bytes.Equal(hSum, rawData[dataLen-cs.hashSize:]) {
 		s.State = EXPIRED //TAMPERED
@@ -208,7 +198,6 @@ func (cs *CookieStore) Get(cookieVal string) (*Session, error) {
 			return nil, err
 		}
 	}
-	s.State = VALID
 	return s, nil
 
 }
